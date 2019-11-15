@@ -1,0 +1,1598 @@
+#DEFINE C_FONTNAME  "Arial Cyr"
+#DEFINE C_FONTSIZE  10
+PARAMETERS cДействиеПриЗапуске, сДополнительныеДанные
+IF EMPTY(cДействиеПриЗапуске)
+    cДействиеПриЗапуске = ""
+ENDIF
+IF EMPTY(сДополнительныеДанные)
+    сДополнительныеДанные = ""
+ENDIF
+
+SET PROCEDURE TO main.prg, _motorMSSQL.prg
+
+CLOSE ALL
+CLEAR MACROS
+CLEAR
+SET DELETED ON
+SET DATE GERMAN
+SET EXCLUSIVE OFF
+SET SAFETY OFF
+SET EXACT OFF
+SET STATUS OFF
+SET STATUS BAR OFF
+SET TALK OFF
+*SET RESOURCE OFF
+SET POINT TO "."
+*SET POINT TO "-"
+SET ESCAPE OFF
+SET COLLATE TO "MACHINE"
+SET PATH TO .\prgs\;.\FORMS\;.\PLUGIN\;.\reports\
+SET HOURS TO 24
+ON ERROR DO APPERROR WITH  ERROR(),  PROG(), LINENO(), MESSAGE(), MESSAGE(1), SYS(2018)
+* если программа уже запущена переключаемся на нее
+IF FindInstance()
+    QUIT
+ENDIF
+* чего падает ? Сама не знает :(
+*PUBLIC oErr AS Exception
+
+
+_SCREEN.CLOSABLE=.F.
+_SCREEN.CONTROLBOX =.F.
+
+_SCREEN.HEIGHT=SYSMETRIC(2) - 70
+_SCREEN.PICTURE = ''
+*_Screen.Width = SYSMETRIC(1) - 8
+
+DECLARE INTEGER GetPrivateProfileString IN Win32API AS GetPrivStr STRING, STRING, STRING, STRING @, INTEGER, STRING
+DECLARE INTEGER WritePrivateProfileString IN Win32API AS WritePrivStr STRING, STRING, STRING, STRING
+
+ОAPP = CREATEOBJECT("_app")
+_SCREEN.CAPTION = ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "заголовок", " Фреймворк для разработки приложений на Visual FoxPro ")
+
+ОAPP.DBFS = ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "DBFS", "Да")
+IF ОAPP.DBFS="Да"
+    ОAPP.DBFS = .T.
+ELSE
+    ОAPP.DBFS = .F.
+ENDIF
+IF ОAPP.DBFS
+    ОAPP.ПУТЬ = ALLTRIM(ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "путь", SYS(5)+SYS(2003)+"\dbfs\"))
+ENDIF
+ОAPP.ИМЯСОЕДИНЕНИЯ = ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "имясоединения", "")
+ОAPP.ПОЛЬЗОВАТЕЛЬ = ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "пользователь", "Специалист")
+ОAPP.ПАРОЛЬ = ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "пароль", "")
+ОAPP.ПРЕФИКС = ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "префикс", "00")
+
+IF ОAPP.DBFS
+    IF !FILE(ОAPP.ПУТЬ + 'main.dbc') OR !FILE(ОAPP.ПУТЬ + 'поля.dbf') OR !FILE(ОAPP.ПУТЬ + 'таблицы.dbf')
+        DO APPERROR
+    ELSE
+        OPEN DATABASE (ОAPP.ПУТЬ + 'main.dbc') SHARED
+        USE ОAPP.ПУТЬ + "поля.dbf" IN 0 AGAIN ALIAS Поля SHARED
+        USE ОAPP.ПУТЬ + "таблицы.dbf" IN 0 AGAIN ALIAS Таблицы SHARED
+    ENDIF
+ENDIF
+
+ОAPP.базаmssql = ОAPP.GETSTR(SYS(5)+SYS(2003)+"\main.INI", "path", "базаmssql", "")
+
+
+* начинаем создавать объекты
+* у нас тут фабрика объектов :)
+* все одинаковые в методах но есть различия в свойствах
+
+SELECT Таблицы
+SCAN ALL FOR INLIST(ALLTRIM(Таблицы.виддокумен),"Справочник","Документ","Система")
+
+    команда = "O" + ALLTRIM(Таблицы.Название) + " = .null."
+    &команда
+    IF  ОAPP.DBFS
+        команда = "O" + ALLTRIM(Таблицы.Название)+ [ = CREATEOBJECT('_motorDBF')]
+    ELSE
+        команда = "O" + ALLTRIM(Таблицы.Название)+ [ = CREATEOBJECT('_motorMSSQL')]
+    ENDIF
+    &команда
+    * это общие свойства
+    команда = "O" + ALLTRIM(Таблицы.Название)+ ".ТаблицыКод = '" + ALLTRIM(Таблицы.Код) + "'"
+    &команда
+    команда = "O" + ALLTRIM(Таблицы.Название)+ ".ТаблицыНазвание = ["+ALLTRIM(Таблицы.Название) +"]"
+    &команда
+
+
+
+
+    * а потом свойства соотвествующие полям таблиц
+    SELECT Поля
+    команда = ""
+    SCAN ALL FOR ALLTRIM(Поля.код_г) == ALLTRIM(Таблицы.код)
+        команда = команда + "ADDPROPERTY(O" + ALLTRIM(Таблицы.Название)+ ",'" +ALLTRIM(Поля.Название)
+        DO CASE
+            CASE INLIST(ALLTRIM(Поля.Тип),"W","C","G","M","V")
+                команда = команда + "','')"  + CHR(13)
+            CASE INLIST(ALLTRIM(Поля.Тип),"Y","B","I","N","F","Q")
+                команда = команда + "',0)" + CHR(13)
+            CASE INLIST(ALLTRIM(Поля.Тип),"D","T")
+                команда = команда + "',{})" + CHR(13)
+            CASE ALLTRIM(Поля.Тип) = "L"
+                команда = команда + "',.F.)" + CHR(13)
+        ENDCASE
+    ENDSCAN
+    * пробуем отрыть таблицу  и создать если ее нет
+    команда = команда + "O"+ALLTRIM(Таблицы.Название) + ".открыть()"
+    =EXECSCRIPT(команда)
+    SELECT Таблицы
+ENDSCAN
+
+* начинаем создавать массивы перечислений
+SELECT Таблицы
+SCAN ALL FOR ALLTRIM(Таблицы.виддокумен) == "Перечисление"
+    LOCAL M.Позиция
+    m.Позиция  = 0
+    SELECT Поля
+    команда = ""
+    SCAN ALL FOR ALLTRIM(Поля.код_г) == ALLTRIM(Таблицы.код)
+        m.Позиция  = m.Позиция  + 1
+        команда = "DIMENSION c" +ALLTRIM(Таблицы.Название) + " [" + STR(m.Позиция)+ ",2]"
+        &команда
+        команда = "c" + ALLTRIM(Таблицы.Название) + " [" + ALLTRIM(STR(m.Позиция))+",1] = '" + ALLTRIM(Поля.Название) + "'" + CHR(13) +;
+            "c" + ALLTRIM(Таблицы.Название) + " [" + ALLTRIM(STR(m.Позиция))+",2] = "  + STR(m.Позиция)
+        =EXECSCRIPT(команда)
+    ENDSCAN
+    SELECT Таблицы
+    RELEASE m.Позиция
+ENDSCAN
+
+ОAPP.инициализация()
+* обрабатываем действия при запуске
+* производится обновление
+m.cДействиеПриЗапуске = UPPER(m.cДействиеПриЗапуске)
+m.сДополнительныеДанные = UPPER(m.сДополнительныеДанные)
+
+* обновление структуры таблиц с переносом данных
+IF m.cДействиеПриЗапуске = "U" AND !EMPTY(m.сДополнительныеДанные)
+
+    * Открываем новую кофигурацию
+    IF ОAPP.DBFS
+        IF !FILE(m.сДополнительныеДанные + 'таблицы.dbf')
+            WAIT WINDOWS "По указанному пути не обнаружена таблица" + ALLTRIM(m.сДополнительныеДанные) + 'таблицы.dbf'
+            DO ВЫХОДИЗПРОГРАММЫ
+        ELSE
+            USE m.сДополнительныеДанные + "таблицы.dbf" IN 0 AGAIN ALIAS ТаблицыNew SHARED
+        ENDIF
+    ENDIF
+    * сканируем список исользуемых таблиц
+    SELECT ТаблицыNew
+    SCAN ALL FOR INLIST(ALLTRIM(ТаблицыNew.виддокумен),"Справочник","Документ")
+        команда = ALLTRIM(ТаблицыNew.Название)
+        IF EMPTY(команда)
+            SELECT ТаблицыNew
+            LOOP
+        ENDIF
+        * открываем таблицу
+        IF FILE(m.сДополнительныеДанные + m.команда + ".dbf")
+            USE (m.сДополнительныеДанные + m.команда + ".dbf") ALIAS ( m.команда+"new" ) IN 0 EXCLUSIVE
+            SELECT (m.команда +"new")
+            * и очищаем ее от случайных заисей
+            ZAP
+        ELSE
+            LOOP
+        ENDIF
+
+        * проверяем есть ли такой dbf файл в старом каталоге
+        IF FILE(ОAPP.ПУТЬ + m.команда + ".dbf")
+            * если есть тогда добавляем из него данные
+            WAIT WINDOWS NOWAIT "Копируем данные таблицы " + ALLTRIM(ТаблицыNew.Название)
+            APPEND FROM (ОAPP.ПУТЬ + m.команда + ".dbf")
+        ENDIF
+        * закрываем новую таблицу
+        USE IN (m.команда+"new")
+
+        SELECT ТаблицыNew
+    ENDSCAN
+    * все закрываем
+    CLOSE DATABASES ALL
+
+    * удаляем все файлы из каталога со старыми данными
+    WAIT WINDOWS NOWAIT " Удаляем таблицы "
+    ERASE (ОAPP.ПУТЬ +  "*.*")
+
+    * копируем туда ДАННЫЕ
+    WAIT WINDOWS NOWAIT " Копируем новую структуру "
+    COPY FILE (m.сДополнительныеДанные + '*.*') TO (ОAPP.ПУТЬ+'*.*')
+    * выходим из программы
+    DO ВЫХОДИЗПРОГРАММЫ
+ENDIF
+
+READ EVENTS
+DO ВЫХОДИЗПРОГРАММЫ
+
+**
+FUNCTION APPERROR
+    PARAMETER M.ERRNUM, M.PROGRAM, M.LINE, M.MESS, M.MESS1, M.PARAM, M.SYS16
+    IF TYPE('M.ERRNUM')!="N"
+        WAIT WINDOWS "Не обнаружены таблицы. Настройти пути в файле main.ini."
+        QUIT
+    ENDIF
+    DO CASE
+            * удаление поля которое участвует в индексе
+        CASE M.ERRNUM=1531
+            RETURN .T.
+            * УДАЛЕНИЕ ИЗ ТАБЛИЦЫ ЕДИНСТВЕННОЙ КОЛОНКИ
+        CASE M.ERRNUM=1871
+            RETURN .T.
+        CASE M.ERRNUM=1707
+            RETRY
+        CASE M.ERRNUM=109
+            IF MESSAGEBOX("Запись заблокирована. Попробуйте позднее.", WTITLE(""), 0+64+0)=1
+                RETRY
+            ELSE
+                RETURN .F.
+            ENDIF
+    ENDCASE
+    PRIVATE K, I
+    SET TEXTMERGE TO ERROR.txt ADDITIVE
+    SET TEXTMERGE ON NOSHOW
+
+\   Date :<<Date()>> <<Time()>>
+\  Error :<<m.errnum>>
+\ Module :<<m.program>>
+\At Line :<<m.line>>
+\Message :<<m.mess>>
+\ Source :<<m.mess1>>
+\  Param :<<m.param>>
+\Execute :<<m.sys16>>
+    IF TYPE("m.команда") = "U"
+
+    ELSE
+        IF !EMPTY(m.команда) AND TYPE('m.команда') = "C"
+\m.команда = <<m.команда>>
+        ENDIF
+    ENDIF
+
+\stack
+    I = 1
+    DO WHILE  .NOT. EMPTY(SYS(16, I))
+\<<i>> <<sys(16,i)>>
+        I = I+1
+    ENDDO
+\
+    SET TEXTMERGE OFF
+    SET TEXTMERGE TO
+    K = MESSAGEBOX("Обнаружена ошибка # "+LTRIM(STR(M.ERRNUM))+' "'+M.MESS+'"', 0+64+0, "Ошибка")
+    DO CASE
+        CASE K=3
+            DO ВЫХОДИЗПРОГРАММЫ
+        CASE K=4
+            RETRY
+        CASE K=5
+            RETURN .T.
+    ENDCASE
+    RETURN .T.
+ENDFUNC
+**
+PROCEDURE ВЫХОДИЗПРОГРАММЫ
+    ОAPP.DISCONNECTSQL()
+    SET SYSMENU TO DEFAULT
+    ON ERROR
+    SET STATUS BAR ON
+    CLOSE ALL
+    RELEASE ALL
+    SET RESOURCE ON
+    RESTORE MACROS
+    POP KEY ALL
+    *SET STEP ON
+
+    *CLEAR ALL
+    CANCEL
+ENDPROC
+**
+DEFINE CLASS _App AS CUSTOM
+    * свойства работы с данными
+    ПУТЬ = ""
+    DBFS = .T.
+    * префикс кодов для данных
+    ПРЕФИКС = ""
+    * свойства соединения через ODBC
+    ИМЯСОЕДИНЕНИЯ = ""
+    СОЕДИНЕНИЕ = 0
+    * свойства текущего пользователя
+    ПОЛЬЗОВАТЕЛЬ = ""
+    ПАРОЛЬ = ""
+    * свойства для выполнения команд
+    команда = ""
+    РЕЗУЛЬТАТ = ""
+    * путь к редактору отчетов (EXCEL)
+    РЕДАКТОР = ""
+    * путь к отчетам
+    путькфайламотчетов = ""
+    * название базы на MSSQL сервере
+    базаmssql = ""
+
+    procedure инициализация
+
+        * добавляем плагины
+        PRIVATE M.NAME, M.OLDERR, M.NERROR, M.PLUGINDIR
+        PRIVATE M.PLUGINMODULES, M.PLUGINCOUNT
+        m.PLUGINDIR = SYS(5)+SYS(2003)+"\plugin\"
+        m.PLUGINMODULES = ADIR(PLGIN, M.PLUGINDIR+'*.*')
+        IF M.PLUGINMODULES=0
+            *RETURN .F.
+        ELSE
+            m.OLDERR = ON('ERROR')
+            m.NERROR = 0
+            ON ERROR STORE ERROR() TO M.NERROR
+            FOR M.PLUGINCOUNT = 1 TO M.PLUGINMODULES
+                IF  .NOT. ('D'$PLGIN(M.PLUGINCOUNT, 5)) .AND. INLIST(JUSTEXT(PLGIN(M.PLUGINCOUNT, 1)), "PRG", "APP", "EXE")
+                    m.NAME = M.PLUGINDIR+PLGIN(M.PLUGINCOUNT, 1)
+                    *пока закроем чтоб не мешал при компиляции
+                    DO INIT IN (M.NAME)
+                ENDIF
+            ENDFOR
+        ENDIF
+        RELEASE M.NAME, M.OLDERR, M.NERROR, M.PLUGINDIR
+        RELEASE M.PLUGINMODULES, M.PLUGINCOUNT
+        ON ERROR DO APPERROR WITH    ERROR(),   PROG(), LINENO(), MESSAGE(), MESSAGE(1), SYS(2018)
+        * заодно заполним пункты меню
+        SET SYSMENU TO DEFAULT
+        DO menu_App.mpr
+        DEFINE POPUP DATAS MARGIN RELATIVE SHADOW COLOR SCHEME 4
+
+        * ищем такого пользователя
+        SELECT пользователи
+        SCAN ALL FOR ALLTRIM(пользователи.Название) == ALLTRIM(ОAPP.ПОЛЬЗОВАТЕЛЬ)
+            * ищем такую роль
+            SELECT роли
+            SCAN ALL FOR ALLTRIM(роли.Название) == ALLTRIM(пользователи.роль)
+                * ищем такое меню
+                SELECT меню
+                SCAN ALL FOR меню.код_г == роли.код
+                    команда = "ОAPP.ADDBAR('"+ALLTRIM(меню.Название)  +"',"+;
+                        "'"+ALLTRIM(меню.строкаменю)+"',"+;
+                        "'"+ALLTRIM(меню.чтоделать) +"'"
+                    IF !EMPTY(ALLTRIM(меню.комбинация))
+                        команда = команда + ",'" + ALLTRIM(меню.комбинация)+ "'"
+                    ENDIF
+                    IF !EMPTY(ALLTRIM(меню.надпись))
+                        команда = команда + ",'" + ALLTRIM(меню.надпись) + "'"
+                    ENDIF
+                    команда = команда + ")"
+                    &команда
+                ENDSCAN && конец поиска меню
+                * если ничего не попало - выходим не заполняя меню
+                RETURN .T.
+            ENDSCAN && конец поиска роли
+            * если ничего не попало - выходим не заполняя меню
+            RETURN .T.
+        ENDSCAN && конец поиска пользователя
+        * если ничего не попало - выходим не заполняя меню
+        RETURN .T.
+
+    endproc
+    **
+    FUNCTION GETSTR
+        PARAMETER M.FILE, M.SECTION, M.ITEM, M.DEFAULT
+        PRIVATE M.BUFF, M.LEN
+        m.BUFF = CHR(0)
+        m.LEN = 0
+        m.BUFF = REPLICATE(CHR(0), 2048)
+        m.LEN = GetPrivStr(M.SECTION, M.ITEM, M.DEFAULT, @M.BUFF, LEN(M.BUFF), M.FILE)
+        RETURN IIF(M.LEN !=0, LEFT(M.BUFF, M.LEN), "")
+    ENDFUNC
+    **
+    FUNCTION putstr
+        PARAMETER M.FILE, M.SECTION, M.ITEM, M.DEFAULT
+        PRIVATE M.LEN
+        m.LEN = WritePrivStr(M.SECTION, M.ITEM, M.DEFAULT, M.FILE)
+        RETURN M.LEN
+    ENDFUNC
+    **
+    FUNCTION ВсеУпаковать
+        SELECT Таблицы
+        SCAN ALL FOR INLIST(ALLTRIM(Таблицы.виддокумен),"Справочник","Документ")
+            команда = "O" + ALLTRIM(Таблицы.Название)+ [.ЗАКРЫТЬ()]
+            &команда
+            SET EXCLUSIVE ON
+            команда = "O" + ALLTRIM(Таблицы.Название)+ [.ОТКРЫТЬ()]
+            IF  .NOT. EVALUATE(команда)
+                DO ВЫХОДИЗПРОГРАММЫ
+            ENDIF
+            команда = "SELECT " + ALLTRIM(Таблицы.Название)
+            &команда
+            команда = "PACK"
+            &команда
+            команда = "O" + ALLTRIM(Таблицы.Название)+ [.ЗАКРЫТЬ()]
+            &команда
+            SET EXCLUSIVE OFF
+            команда = "O" + ALLTRIM(Таблицы.Название)+ [.ОТКРЫТЬ()]
+            IF  .NOT. EVALUATE(команда)
+                DO ВЫХОДИЗПРОГРАММЫ
+            ENDIF
+            SELECT Таблицы
+        ENDSCAN
+        DO ВЫХОДИЗПРОГРАММЫ
+    ENDFUNC
+    **
+
+    PROCEDURE connectSql
+        IF  .NOT. THIS.DBFS
+            STORE SQLCONNECT(THIS.ИМЯСОЕДИНЕНИЯ, THIS.ПАРОЛЬ, '') TO THIS.СОЕДИНЕНИЕ
+            IF THIS.СОЕДИНЕНИЕ<=0
+                = MESSAGEBOX('С сервером соединиться не удалось', 16, 'SQL Connect Error')
+                DO ВЫХОДИЗПРОГРАММЫ
+            ENDIF
+        ENDIF
+    ENDPROC
+
+    PROCEDURE DISCONNECTSQL
+        IF  .NOT. THIS.DBFS
+            = SQLDISCONNECT(THIS.СОЕДИНЕНИЕ)
+        ENDIF
+    ENDPROC
+
+    FUNCTION выполнить
+        IF THIS.DBFS
+            m.команда = THIS.команда+THIS.РЕЗУЛЬТАТ
+            &команда
+        ELSE
+            IF EMPTY(THIS.РЕЗУЛЬТАТ)
+                RETURN IIF( -1 = SQLEXEC(THIS.СОЕДИНЕНИЕ, команда), .F., .T.)
+            ELSE
+                RETURN IIF( -1 = SQLEXEC(THIS.СОЕДИНЕНИЕ, команда,THIS.РЕЗУЛЬТАТ), .F., .T.)
+            ENDIF
+        ENDIF
+    ENDFUNC
+
+    PROCEDURE addbar
+        PARAMETER M.CPOPUPNAME, CPROMPT, CCOMMAND, KEYNAME, KEYCAPTION
+        N = CNTBAR(M.CPOPUPNAME)+1
+        KEYNAME = IIF(EMPTY(KEYNAME), "", KEYNAME)
+        KEYCAPTION = IIF(EMPTY(KEYCAPTION), "", KEYCAPTION)
+        IF  .NOT. EMPTY(KEYNAME)
+            DEFINE BAR N OF (CPOPUPNAME) PROMPT CPROMPT KEY &KEYNAME, KEYCAPTION
+        ELSE
+            DEFINE BAR N OF (CPOPUPNAME) PROMPT CPROMPT
+        ENDIF
+        IF  .NOT. EMPTY(CCOMMAND)
+            ON SELECTION BAR N OF (CPOPUPNAME) &CCOMMAND
+        ENDIF
+    ENDPROC
+
+
+ENDDEFINE
+
+DEFINE CLASS _motor AS CUSTOM
+    Место               = 0
+    Таблица             = ""
+    КомандаДляВставки   = ""
+    КомандаДляИзменения = ""
+    ЭкраннаяФорма       = 0
+    Фильтр              = ""
+    Порядок             = ""
+    * тут будет форма для редактирования
+    Форма               = NULL
+    CохранитьДанные     = .T.
+    * уникальный код записи в таблице
+    Код                 = ""
+    * код записи из таблицы "Таблицы"
+    ТаблицыКод          = ""
+    * название объекта с которым работаем из таблицы "Таблицы"
+    ТаблицыНазвание     = ""
+
+
+
+    PROCEDURE ЗаполнитьКоманды
+    ENDPROC
+
+    PROCEDURE ВстатьНаМесто
+    ENDPROC
+
+    PROCEDURE ВзятьПоля
+    ENDPROC
+
+    PROCEDURE Создать
+    ENDPROC
+
+    PROCEDURE ОткрытьЭкслюзивно
+    ENDPROC
+
+    PROCEDURE Открыть
+    ENDPROC
+
+    PROCEDURE Закрыть
+    ENDPROC
+
+    PROCEDURE Добавить
+    ENDPROC
+
+    PROCEDURE Редактировать
+    ENDPROC
+
+    PROCEDURE Записать
+    ENDPROC
+
+    PROCEDURE Удалить
+    endproc
+
+    PROCEDURE УдалитьСЗапросом
+        IF 6=MESSAGEBOX("Вы действительно хотите удалить запись? ", 4+32+256, " Внимание! ")
+            RETURN THIS.Удалить()
+        ELSE
+            RETURN .F.
+        ENDIF
+    endproc
+
+    PROCEDURE  Взять
+    ENDPROC
+
+    PROCEDURE Показать
+    ENDPROC
+
+    PROCEDURE ПроверитьПривилегии
+    ENDPROC
+
+    PROCEDURE НайтиПоКоду
+    ENDPROC
+
+    PROCEDURE ПроверитьНаличиеЗаписейВИсточнике
+    ENDPROC
+
+    PROCEDURE ВыполнитьКомандуПодключить
+    ENDPROC
+     
+    PROCEDURE ВыполнитьКомандуОтключить
+    ENDPROC
+
+    PROCEDURE ЗаполнитьКоманды
+    ENDPROC
+
+    PROCEDURE ВстатьНаМесто
+        SELECT Таблицы
+        SCAN FOR Таблицы.Код = THIS.ТаблицыКод
+            EXIT
+        endscan
+    ENDPROC
+
+
+    PROCEDURE ЗаписатьВGRSM
+    ENDPROC
+
+    PROCEDURE ЗаписатьВКэш
+        PARAMETERS комманда
+        IF !USED("CACHE")
+            CREATE DBF cache.DBF (NUMBER c (10), kommand m)
+        ENDIF
+        INSERT INTO cache (NUMBER, kommand) VALUES (SYS(2015),комманда)
+    ENDPROC
+    
+    PROCEDURE Захватить
+    ENDPROC
+
+    PROCEDURE Отпустить
+    ENDPROC
+    
+ENDDEFINE
+
+DEFINE CLASS _motorDBF AS _motor
+
+    PROCEDURE Создать
+        команда = ""
+        IF THIS.ВзятьПоля()
+            SCAN ALL
+                команда = команда +IIF(EMPTY(команда),""," ,") + ALLTRIM(TempПоля.Название)+" "
+                DO CASE
+                    CASE INLIST(ALLTRIM(TempПоля.Тип), "W", "Y", "D", "T", "B", "G", "I", "L", "M")
+                        команда = команда + ALLTRIM(TempПоля.Тип)
+                    CASE INLIST(ALLTRIM(TempПоля.Тип), "C", "Q", "V")
+                        команда = команда + ALLTRIM(TempПоля.Тип) + "(" +ALLTRIM(TempПоля.Размер)+")"
+                    CASE INLIST(ALLTRIM(TempПоля.Тип), "N", "F")
+                        команда = команда + ALLTRIM(TempПоля.Тип) + "(" +ALLTRIM(TempПоля.Размер)+","+ALLTRIM(TempПоля.Точность)+")"
+                ENDCASE
+            ENDSCAN
+            USE IN TempПоля
+        ENDIF
+        * Если поля еще не описаны, таблицу не создаем.
+        IF EMPTY(команда)
+            RETURN .F.
+        ENDIF
+
+        команда = " CREATE TABLE " + ОAPP.ПУТЬ + ALLTRIM(Таблицы.Название)+ ".dbf NAME " +ALLTRIM(Таблицы.Название)+ " (" + команда + ")"
+        &команда
+        RETURN .T.
+
+    ENDPROC
+    
+    PROCEDURE Открыть
+        * если у нас DBF версия
+
+        * если область уже открыта
+        IF USED(UPPER(THIS.ТаблицыНазвание))
+            SELECT (THIS.ТаблицыНазвание)
+            * просто выходим
+            RETURN .T.
+        ENDIF
+        * проверяем есть ли такой dbf файл
+        IF FILE(ОAPP.ПУТЬ + THIS.ТаблицыНазвание + ".dbf")
+            SELECT 0
+            * ОТКРЫВАЕМ
+            USE ОAPP.ПУТЬ + THIS.ТаблицыНазвание +".dbf"
+        ELSE
+            * придется его создать
+            RETURN THIS.Создать()
+        ENDIF
+        * есть ли такой индексный файл
+        IF  .NOT. FILE(ОAPP.ПУТЬ + THIS.ТаблицыНазвание + ".cdx")
+            THIS.Закрыть()
+            THIS.ОткрытьЭкслюзивно()
+            * создаем индексы если чего
+            INDEX ON код TAG код COLLATE 'MACHINE'
+            INDEX ON код_г TAG код_г COLLATE 'MACHINE'
+            THIS.Закрыть()
+            THIS.Открыть()
+        ENDIF
+        * и говорим что все окей
+        RETURN .T.
+    ENDPROC
+    
+    **
+    PROCEDURE ОткрытьЭкслюзивно
+        * проверяем есть ли такой dbf файл
+        IF FILE(ОAPP.ПУТЬ + THIS.ТаблицыНазвание + ".dbf")
+            SET EXCLUSIVE ON
+            SELECT 0
+            USE ОAPP.ПУТЬ + THIS.ТаблицыНазвание + ".dbf"
+            SET EXCLUSIVE OFF
+        ENDIF
+        RETURN .T.
+    ENDPROC
+
+    **
+    PROCEDURE Закрыть
+        IF USED(THIS.ТаблицыНазвание)
+            SELECT THIS.ТаблицыНазвание
+            USE 
+        ENDIF
+    ENDPROC
+
+    PROCEDURE ЗаполнитьКоманды
+        LOCAL       m.таблица, m.вставка, m.вставка1, m.изменение
+        STORE "" TO m.таблица, m.вставка, m.вставка1, m.изменение
+
+        * выбрали все записи из таблицы "Поля"
+        * связанные с записью в таблице "Таблицы"
+        * выбрали только реальные поля
+        SELECT Поля.* ;
+            FROM Поля;
+            WHERE ALLTRIM(Поля.код_г) == this.ТаблицыКод ;
+            AND Поля.виртуальное = .F. ;
+            INTO CURSOR TempПоля
+
+        SELECT TempПоля
+
+        SCAN all
+            команда =  "m.temp = TRANSFORM(THIS." + ALLTRIM(TempПоля.Название) + " )"
+            &команда
+            DO CASE
+                * логикал идет без изменений
+                CASE INLIST(ALLTRIM(TempПоля.Тип), "L")            
+                
+                * мемо - кавычки по бокам
+                CASE INLIST(ALLTRIM(TempПоля.Тип), "W", "Y", "D", "T", "B", "G", "I", "M")
+                    * TODO пока не ясно в какой тип превращать значение поля ПоУмолчанию
+                     m.temp = "'" + ALLTRIM(m.temp) + "'"
+                     
+                CASE INLIST(ALLTRIM(TempПоля.Тип), "C", "Q", "V")
+                    IF EMPTY(m.temp)
+                        m.temp = "'" + TempПоля.ПоУмолчанию + "'" 
+                    ELSE 
+                        m.temp = "'" + ALLTRIM(m.temp) + "'"
+                    ENDIF 
+                CASE INLIST(ALLTRIM(TempПоля.Тип), "N", "F")
+
+            ENDCASE
+
+            ******** ВСТАВКА ************
+            вставка  = вставка  + IIF( !EMPTY(вставка)  , [, ] , []) + ALLTRIM(TempПоля.Название)
+            вставка1 = вставка1 + IIF( !EMPTY(вставка1) , [, ] , []) + m.temp
+            ******** конец ВСТАВКИ *******
+
+
+            ******** ИЗМЕНЕНИЕ ***********
+            ** не гоже изменять поле в таблице по которому проводятся изменения
+            IF ALLTRIM(TempПоля.Название) != "код"
+                изменение = изменение + IIF( !EMPTY(изменение), [, ] , [ ]) + ALLTRIM(TempПоля.Название) + " = " + m.temp
+            ENDIF 
+            ******** конец изменения *****
+        ENDSCAN
+
+        * обрабатываем команду для вставки
+        IF !EMPTY(вставка) AND !EMPTY(вставка1)
+            m.вставка = " INSERT INTO " + THIS.ТаблицыНазвание +" ( " + m.вставка + " ) VALUES ( " + вставка1 +" )"
+        ENDIF
+        команда = "O"+ this.ТаблицыНазвание + ".КомандаДляВставки =  вставка "
+        &команда
+
+        * обрабатываем команду для изменения
+        IF !EMPTY(изменение)
+            изменение = " UPDATE " + This.ТаблицыНазвание + ;
+                        " SET  " + изменение + ;
+                        " WHERE " + This.ТаблицыНазвание + ;
+                        ".код = '" + TRANSFORM(THIS.код) + "'"
+        ENDIF
+        команда = "O"+ This.ТаблицыНазвание + ".КомандаДляИзменения =  изменение "
+        &команда
+
+        IF USED("TempПоля")
+            USE IN TempПоля
+        ENDIF
+    ENDPROC
+    **
+    *!*        FUNCTION СоздатьRGSM
+    * серверная версия создания таблицы метаданных
+
+    *!*                IF !USED("RGSM")
+    *!*                    this.результат = ""
+    *!*                    IF !this.выполнить("use RGSM")
+    *!*                        WAIT windows NOWAIT ("Ничего не получилось")
+    *!*                    ENDIF
+
+    *!*                    this.результат = "temp"
+    *!*                    m.команда = 'SELECT       @@Servername             AS Server       ,'
+    *!*                    m.команда = m.команда + ' DB_NAME()                AS DBName       ,'
+    *!*                    m.команда = m.команда + ' TRIM(isc.Table_Name)     AS TableName    ,'
+    *!*                    m.команда = m.команда + ' isc.Table_Schema         AS SchemaName   ,'
+    *!*                    m.команда = m.команда + ' Ordinal_Position         AS Ord          ,'
+    *!*                    m.команда = m.команда + ' Column_Name              AS Column_Nam   ,'
+    *!*                    m.команда = m.команда + ' Data_Type                                ,'
+    *!*                    m.команда = m.команда + ' Numeric_Precision        AS  Prec        ,'
+    *!*                    m.команда = m.команда + ' Numeric_Scale            AS  Scale       ,'
+    *!*                    m.команда = m.команда + ' Character_Maximum_Length AS LEN          ,'
+    *!*                    m.команда = m.команда + ' Is_Nullable                              ,'
+    *!*                    m.команда = m.команда + ' Column_Default                           ,'
+    *!*                    m.команда = m.команда + ' Table_Type                                '
+    *!*                    m.команда = m.команда + ' FROM  INFORMATION_SCHEMA.COLUMNS isc      '
+    *!*                    m.команда = m.команда + ' INNER JOIN  information_schema.tables ist '
+    *!*                    m.команда = m.команда + '       ON isc.table_name = ist.table_name  '
+    *!*                    m.команда = m.команда + ' ORDER BY DBName , '
+    *!*                    m.команда = m.команда + ' TableName , '
+    *!*                    m.команда = m.команда + ' SchemaName , '
+    *!*                    m.команда = m.команда + ' Ordinal_position;  '
+
+    *!*                    IF !this.выполнить(m.команда)
+    *!*                        WAIT windows NOWAIT ("Ничего не получилось")
+    *!*                        *this.ВыходИзПрограммы()
+    *!*                    ENDIF
+
+
+    *!*                    IF NOT USED("RGSM")
+    *!*                        USE RGSM IN 0 EXCLUSIVE
+    *!*                        SELECT RGSM
+    *!*                        ZAP
+    *!*                    ENDIF
+    *!*                    SELECT RGSM
+    *!*                    SET ORDER TO TableName
+
+    *!*                    SELECT temp
+    *!*                    SCAN ALL
+    *!*                        SCATTER name oRGSM
+    *!*                        INSERT  INTO RGSM from name oRGSM
+    *!*                        SELECT temp
+    *!*                    ENDSCAN
+    *!*                    SELECT RGSM
+
+
+    *!*                endif
+    *!*                SELECT RGSM
+    *!*            endfunc
+
+
+    PROCEDURE ВзятьПоля
+
+        SELECT Поля.* ;
+            FROM Поля ;
+            WHERE Поля.код_г == this.ТаблицыКод ;
+            INTO CURSOR TempПоля
+
+        SELECT TempПоля
+        IF _TALLY = 0
+            USE IN TempПоля
+        ENDIF
+        RETURN IIF(_TALLY > 0, .T. , .F.)
+    ENDPROC
+
+
+
+
+
+
+    **
+
+    PROCEDURE Добавить
+
+        IF THIS.ВзятьПоля()
+            SELECT TempПоля
+            * сначала заполняем пустыми значениями
+            SCAN ALL
+                команда = "this." +ALLTRIM(TempПоля.Название)
+                DO CASE
+                    CASE INLIST(ALLTRIM(TempПоля.Тип),"W", "G", "Q", "V", "M")
+                        команда = команда + " = []"
+                    CASE ALLTRIM(TempПоля.Тип) = "C"
+                        команда = команда + " = ["+SPACE(VAL(TempПоля.Размер))+"]"
+                    CASE INLIST(ALLTRIM(TempПоля.Тип),"Y", "B", "I", "N", "F")
+                        команда = команда + " = 0"
+                    CASE INLIST(ALLTRIM(TempПоля.Тип),"D")
+                        команда = команда + " = {}"
+                    CASE INLIST(ALLTRIM(TempПоля.Тип),"T")
+                        команда = команда + " = datetime(null,null,null,null,null,null)"
+                    CASE ALLTRIM(TempПоля.Тип) = "L"
+                        команда = команда + " = .f."
+                ENDCASE
+                &команда
+            ENDSCAN
+            USE IN TempПоля
+        ENDIF
+        SELECT Таблицы
+        * а затем по умолчанию
+        IF !EMPTY(Таблицы.Родитель)
+            команда = "this.КОД_Г = [" + EVALUATE("O" + ALLTRIM(Таблицы.Родитель)+ ".код ") +"]"
+            &команда
+        ENDIF
+        команда = "SELECT C" + THIS.ТаблицыНазвание
+        &команда
+    ENDPROC
+    **
+    PROCEDURE Редактировать
+        IF THIS.ВзятьПоля()
+            SELECT TempПоля
+            SCAN ALL
+                команда = "this." +ALLTRIM(TempПоля.Название)+ " = C" +ALLTRIM(THIS.ТаблицыНазвание)+"." +ALLTRIM(TempПоля.Название)
+                &команда
+            ENDSCAN
+            USE IN TempПоля
+        ENDIF
+        команда = "SELECT C" + THIS.ТаблицыНазвание
+        &команда
+    ENDPROC
+    **
+    PROCEDURE Записать
+        IF !EMPTY(Таблицы.Родитель) AND EMPTY(THIS.код_г)
+            RETURN .F.
+        ENDIF
+        IF NOT THIS.ПроверитьНаличиеЗаписейВИсточнике()
+            RETURN .F.
+        ENDIF
+
+        *********************** проверка наличия записи с таким кодом ********
+        * это необходимо, если мы переносим данные с другой машины и не хотим получить кучу дубликатов
+
+        LOCAL m.вставить
+        m.вставить = .T.
+        IF !EMPTY(THIS.код)
+            команда = "SELECT код AS код where '" + THIS.код + "' == " +  this.ТаблицыНазвание + ".код FROM  " + this.ТаблицыНазвание
+
+            команда = команда+" into cursor temp"
+            &команда
+
+            IF USED("temp")
+                SELECT temp
+                IF ISNULL(temp.код) OR EMPTY(temp.код)
+                    * нет такой записи
+                    m.вставить = .T.
+                ELSE
+                    * есть такая запись
+                    m.вставить = .F.
+                ENDIF
+                USE IN temp
+            ENDIF
+        ENDIF
+        **********************************************************************
+        IF m.вставить
+            * проверка привилегий
+            IF THIS.ПроверитьПривилегии("вставить")
+                *генерируем новый код записи
+                IF EMPTY(THIS.код)
+                    LOCAL m.ДлиннаКода
+                    * определяем длинну строки и отнимаем 2 символа на префикс
+                    m.ДлиннаКода = LEN(THIS.код)-2
+
+                    команда = "SELECT MAX(VAL(SUBSTR(код,3,m.ДлиннаКода))) AS код FROM "+ALLTRIM(Таблицы.Название)+ " into cursor temp"
+                    &команда
+
+                    IF USED("temp")
+                        SELECT temp
+                        IF ISNULL(temp.код)
+                            THIS.код = 1
+                        ELSE
+                            THIS.код = temp.код+1
+                        ENDIF
+                        USE IN temp
+                    ELSE
+                        THIS.код = 1
+                    ENDIF
+                    THIS.код = ОAPP.ПРЕФИКС+REPLICATE("0", m.ДлиннаКода-LEN(ALLTRIM(STR(THIS.код)))) + ALLTRIM(STR(THIS.код))
+                ENDIF
+                THIS.КомандаДляВставки = ""
+                THIS.ЗаполнитьКоманды()
+
+                m.команда = THIS.КомандаДляВставки
+                &команда
+
+            ENDIF
+        ELSE
+            IF THIS.ПроверитьПривилегии("изменить")
+                THIS.КомандаДляИзменения = ""
+                THIS.ЗаполнитьКоманды()
+                m.команда = THIS.КомандаДляИзменения
+                &команда
+            ENDIF
+        ENDIF
+        команда = "SELECT C" + THIS.ТаблицыНазвание
+        &команда
+        IF m.вставить
+            RETURN "new"
+        ELSE
+            RETURN "old"
+        ENDIF
+    endproc
+    **
+
+    **
+    PROCEDURE Удалить
+        * проверили привилегии
+        IF !THIS.ПроверитьПривилегии("удалить")
+            RETURN .F.
+        ENDIF
+
+        * взяли данные из записи
+        THIS.Редактировать()
+        * запомнили с какой таблицей работаем :)
+        THIS.ВстатьНаМесто()
+
+        * это мы запомнили из какой таблицы запись удаляем
+        m.таблица = UPPER(THIS.ТаблицыНазвание)
+
+        * делаем выборку из таблиц у которых эта таблица является источником для поля
+        команда = "SELECT таблицы.название as таблица , поля.название    as поле ;
+                       FROM таблицы, поля ;
+                       where таблицы.код == поля.код_г and UPPER(ALLTRIM(поля.источник)) ==  m.таблица "
+
+
+        команда = команда+" into cursor temp"
+        &команда
+
+        * если выборка есть
+        IF USED("temp") AND RECCOUNT("temp") > 0
+            SELECT temp
+            * если эта таблица является источником
+            * начинаем перебирать записи по одной по одной и считать записи  в связанных таблицах
+            SCAN ALL FOR !ISNULL(temp.таблица) AND !EMPTY(temp.таблица)
+
+                * сколько у нас записей в связанных таблицах которые содержат такой же код в поле код?
+                команда = "SELECT код as код ;
+                                 FROM " + ALLTRIM(temp.таблица)+;
+                    " where " + ALLTRIM(temp.таблица)+"." + ALLTRIM(temp.поле)+ " = [" +EVALUATE("O" + m.таблица + ".код ") + "]"+;
+                    " into cursor temp1"
+
+                &команда
+                IF _TALLY >0
+                    WAIT WINDOWS " Из таблицы " + ALLTRIM(temp.таблица) +" не удалены записи связанные с этой."
+                    USE IN temp1
+                    USE IN temp
+                    команда = "SELECT C" + THIS.ТаблицыНазвание
+                    &команда
+                    RETURN .F.
+                ENDIF
+                SELECT temp
+            ENDSCAN
+        ENDIF
+        * ВСЕ ПРОШЛИ, НЕ НА ЧЕМ НЕ ЗАЦЕПИЛИСЬ
+        IF USED("Temp")
+            USE IN temp
+        ENDIF
+        IF USED("Temp1")
+            USE IN temp1
+        ENDIF
+
+        * ТОГДА УДАЛЯЕМ ЗАПИСЬ
+        команда = "SELECT C" + THIS.ТаблицыНазвание
+        &команда
+
+        команда = "THIS.КОД = C" + THIS.ТаблицыНазвание+ ".КОД"
+        &команда
+
+        команда = "THIS.КОД_Г = C" + THIS.ТаблицыНазвание+ ".КОД_Г"
+        &команда
+
+        команда = " DELETE FROM " + THIS.ТаблицыНазвание + " WHERE " + THIS.ТаблицыНазвание + ".КОД = THIS.код"
+        &команда
+
+        команда = "SELECT C" + THIS.ТаблицыНазвание
+        &команда
+
+        RETURN .T.
+    endproc
+    **
+    PROCEDURE  Взять
+        LPARAMETERS m.код
+        IF !THIS.ПроверитьПривилегии("взять")
+            RETURN .F.
+        ENDIF
+        THIS.ВстатьНаМесто()
+        команда = ""
+        IF INLIST(Таблицы.виддокумен,"Система", "Справочник", "Документ")
+            IF EMPTY(ALLTRIM(запрос))
+                WAIT WINDOWS " Не указана команда для показа данных "
+                RETURN .F.
+            ELSE
+                команда = ALLTRIM(Таблицы.запрос)
+            ENDIF
+        ENDIF
+        IF  !EMPTY(THIS.Фильтр)
+            команда = команда + ' ' + THIS.Фильтр
+        ENDIF
+        IF  !EMPTY(THIS.Порядок)
+            команда = команда + ' ' + THIS.Порядок
+        ENDIF
+
+        команда = команда + " INTO CURSOR C" +THIS.ТаблицыНазвание
+        &команда
+
+        команда = "SELECT C" + THIS.ТаблицыНазвание
+        &команда
+
+        IF  !EMPTY(m.код)
+            команда = "m.КОД=C" + THIS.ТаблицыНазвание+ ".КОД"
+            LOCATE FOR EVALUATE(команда)
+            IF !FOUND()
+                GO TOP
+            ENDIF
+        ENDIF
+        RETURN .T.
+    ENDPROC
+    **
+    PROCEDURE Показать
+        LPARAMETERS m.код
+        * если программист не предусмотрел на какую запись нужно встать
+        IF EMPTY(m.код)
+            * возмем данные о текущей записи
+            m.код = THIS.код
+        ENDIF
+        IF THIS.ПроверитьПривилегии("показать")
+            THIS.ВстатьНаМесто()
+            IF (Таблицы.виддокумен = "Справочник" OR Таблицы.виддокумен = "Документ" OR Таблицы.виддокумен = "Система")
+                IF THIS.ЭкраннаяФорма = 0
+                    THIS.Взять(m.код)
+                    команда = "SELECT C" + THIS.ТаблицыНазвание
+                    &команда
+                    *команда = "DO FORM .\forms\" + THIS.ТаблицыНазвание+ ".scx"
+                    команда = "DO FORM .\forms\экраннаяформа.scx"
+                    &команда
+                ENDIF
+                THIS.ЭкраннаяФорма = 1
+            ENDIF
+        ENDIF
+    ENDPROC
+    **
+    PROCEDURE ПроверитьПривилегии
+        LPARAMETERS m.привилегия
+        PRIVATE m.таблица, m.можно
+        m.таблица = ""
+        m.можно = .F.
+
+        m.таблица = UPPER(THIS.ТаблицыНазвание)
+
+        SELECT Привилегии.* ;
+            FROM пользователи, Привилегии, роли;
+            WHERE UPPER(ALLTRIM(ОAPP.ПОЛЬЗОВАТЕЛЬ)) == UPPER(ALLTRIM(пользователи.Название)); && сначала ищем такого пользователя
+        AND UPPER(ALLTRIM(роли.Название)) == UPPER(ALLTRIM(пользователи.роль)) ; && затем ищем такую роль
+        AND роли.код = Привилегии.код_г ; && затем по роли определяем привилегии
+        AND m.таблица == UPPER(ALLTRIM(Привилегии.пр_таблица)); && для какой то одной таблицы
+        INTO CURSOR TempПривилегии
+
+        IF _TALLY > 0
+            DO CASE
+                CASE m.привилегия = "взять"    AND TempПривилегии.пр_взять
+                    m.можно = .T.
+                CASE m.привилегия = "показать" AND TempПривилегии.пр_показать
+                    m.можно = .T.
+                CASE m.привилегия = "вставить" AND TempПривилегии.пр_вставить
+                    m.можно = .T.
+                CASE m.привилегия = "изменить" AND TempПривилегии.пр_изменить
+                    m.можно = .T.
+                CASE m.привилегия = "удалить" AND TempПривилегии.пр_удалить
+                    m.можно = .T.
+            ENDCASE
+        ENDIF
+        IF USED("TempПривилегии")
+            USE IN TempПривилегии
+        ENDIF
+        IF !m.можно
+            WAIT WINDOWS NOWAIT "Вам запрещено " + m.привилегия + ". Таблица: " + ALLTRIM(Таблицы.Название)
+        ENDIF
+        RETURN m.можно
+
+    ENDPROC
+
+    PROCEDURE НайтиПоКоду
+        LPARAMETERS НужныйКод
+        команда = "SELECT C" + THIS.ТаблицыНазвание
+        &команда
+        SCAN ALL FOR код == НужныйКод
+            THIS.Редактировать()
+            RETURN .T.
+        ENDSCAN
+        RETURN .F.
+    ENDPROC
+
+    PROCEDURE ПроверитьНаличиеЗаписейВИсточнике
+        * у нас есть объект с заполнеными свойствами
+        * необходимо выбрать свойства объекта которые ссылаются на другую таблицу
+        
+        SELECT Поля.Название, Поля.источник ;
+            FROM Поля;
+            WHERE ALLTRIM(Поля.код_г)  == THIS.ТаблицыКод  ;
+            AND Поля.виртуальное = .F. ;
+            AND !EMPTY(Поля.источник) ;
+            INTO CURSOR TempПоля
+
+        SELECT TempПоля
+        IF _TALLY = 0
+            USE IN TempПоля
+            RETURN .T.
+        ENDIF
+        * просканировать полученную таблицу
+        LOCAL m.Название, m.источник, m.РЕЗУЛЬТАТ
+        m.РЕЗУЛЬТАТ = ""
+
+        SCAN ALL
+            m.Название = TempПоля.Название
+            m.источник = TempПоля.источник
+
+            * и проверить есть ли в таблице на которую ссылаются такие записи
+            команда =           " select * from " + ALLTRIM(m.источник)
+            команда = команда + " into cursor temp "
+            команда = команда + " where код = this." + ALLTRIM(m.Название)
+            &команда
+
+            SELECT temp
+            IF _TALLY = 0
+                m.РЕЗУЛЬТАТ = m.РЕЗУЛЬТАТ + CHR(13) + " Не найдена запись в " + ALLTRIM(m.источник) + " для " +ALLTRIM(m.Название)
+            ENDIF
+        ENDSCAN
+        USE IN TempПоля
+        USE IN temp
+        IF !EMPTY(m.РЕЗУЛЬТАТ)
+            WAIT WINDOWS m.РЕЗУЛЬТАТ
+            RETURN .F.
+        ELSE
+            RETURN .T.
+        ENDIF
+
+    endproc
+
+     PROCEDURE ВыполнитьКомандуПодключить
+         IF NOT EMPTY(this.код)         
+             SELECT поля
+             IF USED('temp')
+                 USE IN 'temp'
+             endif
+             
+             команда = "SELECT поля.подключить FROM поля WHERE поля.код = '" + this.код + "' INTO CURSOR 'temp'"
+             &команда
+
+             IF used("temp")
+                 SELECT "temp"
+                 SCAN all
+                     SCATTER MEMVAR memo
+                     IF NOT EMPTY(m.подключить)
+                         try 
+                             =EXECSCRIPT(подключить)
+                         CATCH
+                             WAIT windows " Не смогла выполнить метод Подключить !"
+                         ENDTRY
+                      ENDIF 
+                 endscan
+                 USE IN "temp"
+             ENDIF 
+         ENDIF 
+     ENDPROC
+     
+     PROCEDURE ВыполнитьКомандуОтключить
+         IF NOT EMPTY(this.код)
+             SELECT поля
+             IF USED('temp')
+                 USE IN 'temp'
+             endif
+             команда = "SELECT поля.отключить FROM поля WHERE поля.код = '" + this.код + "' INTO CURSOR 'temp'"
+             &команда
+             IF used("temp")
+                 SELECT "temp"
+                 SCAN all
+                     SCATTER MEMVAR memo 
+                     IF NOT EMPTY(m.отключить)
+                         try 
+                             =EXECSCRIPT(отключить)
+                         CATCH
+                             WAIT windows " Не смогла выполнить метод Отключить !"
+                         ENDTRY
+                      ENDIF 
+                 endscan
+                 USE IN "temp"
+             ENDIF 
+         ENDIF 
+     ENDPROC
+     
+    PROCEDURE Захватить
+        SELECT (THIS.ТаблицыНазвание)
+        RETURN FLOCK()
+    ENDPROC
+    **
+    PROCEDURE Отпустить
+        UNLOCK IN (THIS.ТаблицыНазвание)
+    ENDPROC     
+
+ENDDEFINE
+
+
+
+* БИБЛИОТЕКА НЕВИЗУАЛЬНЫХ КЛАССОВ
+* ПОЛЬЗОВАТЕЛЬСКИЕ ОБЪЕКТЫ И БАЗОВЫЕ КЛАССЫ, ТИПА :
+* Column, Header
+***************************************************
+DEFINE CLASS MyHeader AS HEADER
+    FONTNAME=C_FONTNAME
+    FONTSIZE=C_FONTSIZE
+    FONTBOLD=.T.
+    ALIGNMENT=2
+    WORDWRAP=.T.
+    объект = ""
+    Порядок = ""
+
+    PROCEDURE INIT(m.объект, m.Порядок)
+        WITH THIS
+            .объект = m.объект
+            .Порядок = m.Порядок
+        ENDWITH
+
+    PROCEDURE DBLCLICK
+        команда =  'o' +THIS.объект+ '.порядок  = " order by '+THIS.Порядок + '"'
+        &команда
+        THISFORMSET.обновить()
+    ENDPROC
+
+ENDDEFINE
+
+
+DEFINE CLASS MyColumn AS COLUMN
+    FONTNAME=C_FONTNAME
+    FONTSIZE=C_FONTSIZE
+    VISIBLE=.T.
+    INDEX=0
+
+
+    PROCEDURE INIT(m.Тип, m.объект , m.Порядок)
+        WITH THIS
+            .REMOVEOBJECT('Header1')
+            .ADDOBJECT("Header","MyHeader", m.объект, m.Порядок)
+            .REMOVEOBJECT("Text1")
+            DO CASE
+                CASE m.Тип = "CheckBox"
+                    .ADDOBJECT("CheckBox","MyGridCheckBox")
+                    .CURRENTCONTROL="CheckBox"
+                    .CHECKBOX.VISIBLE = .T.
+                    .SPARSE = .F.
+                OTHERWISE
+                    .ADDOBJECT("Text","MyGridText")
+                    .CURRENTCONTROL="Text"
+                    .TEXT.VISIBLE=.T.
+
+            ENDCASE
+        ENDWITH
+   ENDPROC 
+        
+ENDDEFINE
+
+DEFINE CLASS MyGridText AS TEXTBOX
+    FONTNAME=C_FONTNAME
+    FONTSIZE=C_FONTSIZE
+
+    MARGIN=0
+    SPECIALEFFECT=1
+    SELECTONENTRY=.T.
+    BORDERSTYLE=0
+    VISIBLE=.T.
+
+    PROCEDURE KEYPRESS(nKeyCode, nShiftAltCtrl )
+         DO CASE
+        CASE  nKeyCode = -2
+            THISFORMSET.f3()
+        CASE  nKeyCode = -3
+            THISFORMSET.f4()
+        CASE  nKeyCode = 7
+            THISFORMSET.delete()
+        CASE  nKeyCode = 13
+            THISFORMSET.enter()
+        OTHERWISE
+
+        ENDCASE
+    ENDPROC
+
+    PROCEDURE RIGHTCLICK
+        THISFORMSET.выход()
+    ENDPROC
+
+    PROCEDURE DBLCLICK
+        THISFORMSET.F4()
+    ENDPROC
+
+
+ENDDEFINE
+
+DEFINE CLASS MyGridCheckBox AS CHECKBOX
+
+    FONTNAME=C_FONTNAME
+    FONTSIZE=C_FONTSIZE
+
+    VISIBLE=.T.
+    CAPTION = ""
+    ALIGNMENT = 2
+
+    PROCEDURE KEYPRESS(nKeyCode, nShiftAltCtrl )
+        DO CASE
+        CASE  nKeyCode = -2
+            THISFORMSET.f3()
+        CASE  nKeyCode = -3
+            THISFORMSET.f4()
+        CASE  nKeyCode = 7
+            THISFORMSET.delete()
+        CASE  nKeyCode = 13
+            THISFORMSET.enter()
+        OTHERWISE
+
+        ENDCASE
+
+    ENDPROC
+
+    PROCEDURE RIGHTCLICK
+        THISFORMSET.f4()
+    ENDPROC
+
+    PROCEDURE DBLCLICK
+        THISFORMSET.f4()
+    ENDPROC
+
+ENDDEFINE
+
+PROCEDURE NtoC
+    PARAMETER m.nValue, m.Decimals
+    PRIVATE ALL
+    *
+    * m.nValue      - (N) число для преобразовани
+    * m.Decimals    - (L) выводить с копейками ?
+    *
+    * проверка суммы
+    IF EMPTY(m.nValue)
+        RETURN 'Ноль рублей'+IIF(!EMPTY(m.Decimals),' 00 копеек','')+'.'
+        * проверка что прислали число
+    ELSE
+        IF TYPE('m.nValue') # 'N'
+            RETURN ''
+        ENDIF
+    ENDIF
+
+    STORE '' TO ret
+    STORE 0  TO tmp, tv, I
+
+    DECLARE names[6,3], numbers[19], tens[10], hound[10]
+
+    names[1,1]='копейка'
+    names[1,2]='копейки'
+    names[1,3]='копеек'
+
+    names[2,1]='рубль'
+    names[2,2]='рубля'
+    names[2,3]='рублей'
+
+    names[3,1]='тысяча'
+    names[3,2]='тысячи'
+    names[3,3]='тысяч'
+
+    names[4,1]='миллион'
+    names[4,2]='миллиона'
+    names[4,3]='миллионов'
+
+    names[5,1]='миллиард'
+    names[5,2]='миллиарда'
+    names[5,3]='миллиардов'
+
+    names[6,1]='триллион'
+    names[6,2]='триллиона'
+    names[6,3]='триллионов'
+
+    *единицы
+    numbers[ 1]='один'
+    numbers[ 2]='два'
+    numbers[ 3]='три'
+    numbers[ 4]='четыре'
+    numbers[ 5]='пять'
+    numbers[ 6]='шесть'
+    numbers[ 7]='семь'
+    numbers[ 8]='восемь'
+    numbers[ 9]='девять'
+    numbers[10]='десять'
+    numbers[11]='одиннадцать'
+    numbers[12]='двенадцать'
+    numbers[13]='тринадцать'
+    numbers[14]='четырнадцать'
+    numbers[15]='пятнадцать'
+    numbers[16]='шестнадцать'
+    numbers[17]='семнадцать'
+    numbers[18]='восемнадцать'
+    numbers[19]='девятнадцать'
+
+    * десятки
+    tens[ 1]='десть'
+    tens[ 2]='двадцать'
+    tens[ 3]='тридцать'
+    tens[ 4]='сорок'
+    tens[ 5]='пятьдесят'
+    tens[ 6]='шестьдесят'
+    tens[ 7]='семьдесят'
+    tens[ 8]='восемьдесят'
+    tens[ 9]='девяносто'
+
+    *сотни
+    hound[ 1]='сто'
+    hound[ 2]='двести'
+    hound[ 3]='триста'
+    hound[ 4]='четыреста'
+    hound[ 5]='пятьсот'
+    hound[ 6]='шестьсот'
+    hound[ 7]='семьсот'
+    hound[ 8]='восемьсот'
+    hound[ 9]='девятьсот'
+
+    *------------------------------------------------------------------------
+
+    IF !EMPTY(m.Decimals)
+        tmp=ROUND(MOD( nValue * 100, 100),0)
+        ret=' '+TRAN(tmp,'@L 99')+' '+x_end(tmp,1)+'.'
+    ELSE
+        ret='.'
+    ENDIF
+
+    I=2
+    tmp=INT(nValue)                       && убираем копейки
+    ret=x_end(MOD(tmp,100),2,.T.)+ret
+
+    DO WHILE tmp > 0
+        tv=MOD(tmp,1000)                   && выделяем следующую тысячу
+        IF tmp=0 AND I=2                   && значение 0
+            ret='Ноль рублей'+ret          && готовим возврат
+            EXIT
+        ELSE
+            ret=IIF(tv>0,x_str(tv)+' '+x_end(MOD(tv,100),I)+IIF(ret='.','',' ')+ret, ret)
+        ENDIF
+        tmp=INT(tmp/1000)
+        I=I+1
+    ENDDO
+    ret=ALLTRIM( ret)
+    DO WHILE('  ' $ ret)
+        ret=STRTRAN(ret,'  ',' ')
+    ENDDO
+    RETURN UPPER(LEFT(ret,1))+SUBSTR(ret,2)
+
+PROCEDURE x_str
+    PARAMETER nx
+    PRIVATE nx, nh, s
+    s=''
+    IF nx > 99
+        nh=INT(nx/100)
+        s=hound[nh]
+        nx=MOD(nx,100)
+    ENDIF
+    IF nx > 19
+        nh=INT(nx/10)
+        s=s+' '+tens[nh]
+        nx=MOD(nx,10)
+    ENDIF
+    IF nx > 0
+        IF I=3 AND BETWEEN(nx,1,2)
+            DO CASE
+                CASE nx=1
+                    s=s+' '+'одна'
+                CASE nx=2
+                    s=s+' '+'две'
+            ENDCASE
+        ELSE
+            s=s+' '+numbers[nx]
+        ENDIF
+    ENDIF
+    RETURN ALLTRIM(s)
+
+PROCEDURE x_end
+    PARAMETER nx, ni, nz
+    PRIVATE tmp, nx, ni, nz
+
+    IF nx < 20
+        RETURN x_end_x(nx)
+    ELSE
+        RETURN x_end_x(INT(MOD( nx, 10)))
+    ENDIF
+
+PROCEDURE x_end_x
+    PARAMETER ny
+    IF ni=2 AND !nz
+        RETURN ''
+    ENDIF
+    DO CASE
+        CASE ny = 0 AND ni=1
+            RETURN names[ni,3]
+        CASE ny = 1
+            RETURN names[ni,1]
+        CASE BETWEEN(ny, 2, 4)
+            RETURN names[ni,2]
+        OTHER
+            RETURN names[ni,3]
+    ENDCASE
+
+PROCEDURE FindInstance
+    IF _VFP.STARTMODE=0
+        RETURN .F.
+    ENDIF
+
+    *
+    * Поиск копии программы, и если она работает то переключаемся на нее
+    *
+    #DEFINE GWL_USERDATA            (-21)
+    #DEFINE ERROR_ALREADY_EXISTS    183
+
+    DECLARE INTEGER CreateMutex         IN Win32Api INTEGER, INTEGER, STRING
+    DECLARE INTEGER ReleaseMutex         IN Win32Api INTEGER
+    DECLARE INTEGER CloseHandle         IN Win32Api INTEGER
+
+    DECLARE LONG     GetWindowLong         IN Win32Api INTEGER, INTEGER
+    DECLARE LONG     SetWindowLong         IN Win32Api INTEGER, INTEGER, LONG
+    DECLARE INTEGER GetLastError         IN Win32Api
+
+    DECLARE INTEGER GetTopWindow         IN Win32Api INTEGER
+    DECLARE INTEGER GetWindow             IN Win32Api INTEGER, INTEGER
+    DECLARE INTEGER SetForegroundWindow IN Win32Api INTEGER
+    DECLARE INTEGER SHOWWINDOW IN Win32Api INTEGER, INTEGER
+
+    LOCAL m.Mutex, m.Magic, hMutex, HWND, m.ret
+
+    m.ret=.F.                    && Возвращаемое значение
+    m.Mutex="My.Mutex.0001"        && Волшебное слово
+    m.Magic=0x12345678            && Магическое число (прямо Гарри Потер !)
+
+    hMutex=CreateMutex(0,0,m.Mutex)
+    * Если Mutex уже создан
+    IF GetLastError()=ERROR_ALREADY_EXISTS
+        CloseHandle(hMutex)                && Убъем хэндл
+
+        HWND=GetTopWindow(0)            && Начальное окно
+        DO WHILE HWND # 0
+            HWND=GetWindow(HWND,2)        && Следующее окно
+            IF HWND # 0                    && Есть hWnd
+                IF GetWindowLong(HWND,GWL_USERDATA)=m.Magic  && И в нем наше волшебное число
+                    * Функции вызываются только в такой последовательности
+                    * Иначе главное окно фокса остается "дырявым"
+                    SetForegroundWindow(HWND)    && Переместим его под глаза юзера
+                    SHOWWINDOW(HWND,3)            && И распхнем пошире
+                    m.ret=.T.
+                    EXIT
+                ENDIF
+            ENDIF
+        ENDDO
+
+    ELSE
+        SetWindowLong(_VFP.HWND,GWL_USERDATA,m.Magic)    && Пишем в окно Волшебное число
+        ReleaseMutex(hMutex)            && Mutex нам больше не нужен - он умрет вмсесте с процессом
+    ENDIF
+    RETURN m.ret
+    
+    
+    
+    
+    
